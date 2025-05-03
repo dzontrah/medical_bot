@@ -1,12 +1,19 @@
 import os
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    ContextTypes, ConversationHandler, filters
+)
 
+# Environment variable for bot token
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# In-memory storage (for testing)
-appointments = {}
-messages = []
+# Conversation states
+BOOK_NAME, BOOK_DATETIME, CONTACT_MESSAGE = range(3)
+
+# In-memory storage
+appointments = []
+contact_messages = []
 
 # /start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -19,55 +26,83 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Type a command to get started!"
     )
 
-# /book command
-async def book(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if len(context.args) < 2:
-        await update.message.reply_text(
-            "🗓 Usage: /book <YourName> <DateTime>\nExample: /book JohnDoe 2025-05-10 14:00"
-        )
-        return
-
-    name = context.args[0]
-    datetime = " ".join(context.args[1:])
-    user_id = update.message.from_user.id
-
-    appointments[user_id] = {"name": name, "datetime": datetime}
-    await update.message.reply_text(
-        f"✅ Appointment booked for {name} at {datetime}.\nWe’ll contact you if anything changes!"
-    )
-
 # /faq command
 async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "❓ *Frequently Asked Questions*\n\n"
-        "⏰ *Opening hours:* Mon-Fri 08:00–18:00\n"
-        "💉 *Services:* General practice, pediatrics, dermatology, lab tests\n"
-        "💳 *Insurance:* We accept all major insurance providers.\n\n"
-        "Need something else? Use /contact to send us a message.",
-        parse_mode="Markdown"
+        "❓ Frequently Asked Questions\n\n"
+        "⏰ Opening hours: Mon–Fri 08:00–18:00\n"
+        "💉 Services: General practice, pediatrics, dermatology, lab tests\n"
+        "💳 Insurance: We accept all major insurance providers.\n\n"
+        "Need something else? Use /contact to send us a message."
     )
 
-# /contact command
-async def contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("✉️ Usage: /contact <Your message>")
-        return
+# ---- BOOKING ----
 
-    user = update.message.from_user.username or update.message.from_user.id
-    message_text = " ".join(context.args)
-    messages.append({"user": user, "message": message_text})
+async def book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("👤 Please provide your full name.")
+    return BOOK_NAME
 
-    await update.message.reply_text(
-        "✅ Your message has been sent! Our staff will reach out to you soon."
-    )
+async def book_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["name"] = update.message.text
+    await update.message.reply_text("📅 Please provide the desired date and time (e.g., 2025-05-10 14:00).")
+    return BOOK_DATETIME
 
-# Set up the bot
+async def book_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = context.user_data["name"]
+    datetime = update.message.text
+    appointments.append({"name": name, "datetime": datetime})
+    await update.message.reply_text(f"✅ Thank you, {name}! Your appointment has been booked for {datetime}.")
+    return ConversationHandler.END
+
+async def book_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ Booking process canceled.")
+    return ConversationHandler.END
+
+# ---- CONTACT ----
+
+async def contact_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("✉️ Please type your message for the clinic.")
+    return CONTACT_MESSAGE
+
+async def contact_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+    message = update.message.text
+    contact_messages.append({"user": user.username or user.first_name, "message": message})
+    await update.message.reply_text("✅ Your message has been sent to the clinic. We'll get back to you soon!")
+    return ConversationHandler.END
+
+async def contact_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ Contact process canceled.")
+    return ConversationHandler.END
+
+# ---- MAIN ----
+
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+# Handlers
 app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("book", book))
 app.add_handler(CommandHandler("faq", faq))
-app.add_handler(CommandHandler("contact", contact))
+
+# Booking conversation
+book_conv = ConversationHandler(
+    entry_points=[CommandHandler("book", book_start)],
+    states={
+        BOOK_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, book_name)],
+        BOOK_DATETIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, book_datetime)],
+    },
+    fallbacks=[CommandHandler("cancel", book_cancel)],
+)
+app.add_handler(book_conv)
+
+# Contact conversation
+contact_conv = ConversationHandler(
+    entry_points=[CommandHandler("contact", contact_start)],
+    states={
+        CONTACT_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, contact_message)],
+    },
+    fallbacks=[CommandHandler("cancel", contact_cancel)],
+)
+app.add_handler(contact_conv)
 
 # Run the bot
 app.run_polling()
