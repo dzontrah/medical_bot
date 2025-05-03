@@ -9,7 +9,7 @@ from telegram.ext import (
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 # Conversation states
-BOOK_NAME, BOOK_DATETIME, CONTACT_MESSAGE = range(3)
+BOOK_NAME, BOOK_DATETIME, BOOK_PHONE, CONTACT_MESSAGE = range(4)
 
 # In-memory storage
 appointments = []
@@ -48,10 +48,19 @@ async def book_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return BOOK_DATETIME
 
 async def book_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["datetime"] = update.message.text
+    await update.message.reply_text("📞 Please provide your phone number (we'll use it to confirm the booking).")
+    return BOOK_PHONE
+
+async def book_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = context.user_data["name"]
-    datetime = update.message.text
-    appointments.append({"name": name, "datetime": datetime})
-    await update.message.reply_text(f"✅ Thank you, {name}! Your appointment has been booked for {datetime}.")
+    datetime = context.user_data["datetime"]
+    phone = update.message.text
+    appointments.append({"name": name, "datetime": datetime, "phone": phone})
+    await update.message.reply_text(
+        f"✅ Thank you, {name}! Your appointment is booked for {datetime}.\n"
+        f"📞 We will contact you at: {phone}."
+    )
     return ConversationHandler.END
 
 async def book_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -89,6 +98,7 @@ book_conv = ConversationHandler(
     states={
         BOOK_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, book_name)],
         BOOK_DATETIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, book_datetime)],
+        BOOK_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, book_phone)],
     },
     fallbacks=[CommandHandler("cancel", book_cancel)],
 )
